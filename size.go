@@ -1,7 +1,6 @@
 package limits
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 
@@ -16,13 +15,13 @@ type maxBytesReader struct {
 	sawEOF     bool
 }
 
-func (mbr *maxBytesReader) tooLarge() (n int, err error) {
-	n, err = 0, fmt.Errorf("HTTP request too large")
+func (mbr *maxBytesReader) tooLarge(m int) (n int, err error) {
+	n, err = m, io.EOF
 
 	if !mbr.wasAborted {
 		mbr.wasAborted = true
 		ctx := mbr.ctx
-		_ = ctx.Error(err)
+		// _ = ctx.Error(err)
 		ctx.Header("connection", "close")
 		ctx.String(http.StatusRequestEntityTooLarge, "request too large")
 		ctx.AbortWithStatus(http.StatusRequestEntityTooLarge)
@@ -34,7 +33,7 @@ func (mbr *maxBytesReader) Read(p []byte) (n int, err error) {
 	toRead := mbr.remaining
 	if mbr.remaining == 0 {
 		if mbr.sawEOF {
-			return mbr.tooLarge()
+			return mbr.tooLarge(n)
 		}
 		// The underlying io.Reader may not return (0, io.EOF)
 		// at EOF if the requested size is 0, so read 1 byte
@@ -55,7 +54,7 @@ func (mbr *maxBytesReader) Read(p []byte) (n int, err error) {
 		// If we had zero bytes to read remaining (but hadn't seen EOF)
 		// and we get a byte here, that means we went over our limit.
 		if n > 0 {
-			return mbr.tooLarge()
+			return mbr.tooLarge(n)
 		}
 		return 0, err
 	}
@@ -78,13 +77,15 @@ func (mbr *maxBytesReader) Close() error {
 // * Current context will be aborted
 func RequestSizeLimiter(limit int64) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Request.Body = &maxBytesReader{
+		Reader := maxBytesReader{
 			ctx:        ctx,
 			rdr:        ctx.Request.Body,
 			remaining:  limit,
 			wasAborted: false,
 			sawEOF:     false,
 		}
-		ctx.Next()
+		ctx.Request.Body = &Reader
+		print(Reader.wasAborted)
+		print("return")
 	}
 }
